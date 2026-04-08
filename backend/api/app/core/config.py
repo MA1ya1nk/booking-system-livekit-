@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     database_url: str
     secret_key: str
     access_token_expire_minutes: int = 120
+    # Shared secret for voice agent → API (header X-Agent-Key). If unset, agent routes return 503.
+    agent_api_key: str | None = None
 
 
 settings = Settings()

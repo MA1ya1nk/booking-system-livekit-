@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.agent_voice import router as agent_voice_router
 from app.api.routes.appointments import router as appointments_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.services import router as services_router
@@ -33,3 +34,4 @@ def health():
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(services_router, prefix=settings.api_v1_prefix)
 app.include_router(appointments_router, prefix=settings.api_v1_prefix)
+app.include_router(agent_voice_router, prefix=settings.api_v1_prefix)

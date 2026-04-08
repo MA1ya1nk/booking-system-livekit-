@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 
@@ -25,13 +26,45 @@ load_dotenv(".env.local")
 HOSPITAL_API_BASE_URL = os.getenv("HOSPITAL_API_BASE_URL", "http://127.0.0.1:8000/api/v1")
 
 
+def _voice_headers() -> dict[str, str] | None:
+    key = os.getenv("HOSPITAL_AGENT_API_KEY", "").strip()
+    if not key:
+        return None
+    return {"X-Agent-Key": key}
+
+
+async def _http_error_detail(response: httpx.Response) -> str:
+    try:
+        body = response.json()
+        detail = body.get("detail")
+        if isinstance(detail, str):
+            return detail
+        if isinstance(detail, list):
+            return "; ".join(
+                str(item.get("msg", item)) if isinstance(item, dict) else str(item)
+                for item in detail
+            )
+        return response.text[:800]
+    except (json.JSONDecodeError, TypeError):
+        return response.text[:800]
+
+
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
-            instructions="""You are a hospital voice assistant. The user is interacting with you via voice.
-            Use tools to answer hospital service questions such as available services, price, slot duration and service timings.
-            Keep responses concise, clear, and plain text without special formatting.
-            Important: Appointment booking is not enabled yet. If asked to book, clearly say booking via voice is coming soon.""",
+            instructions="""You are a hospital voice assistant. Users speak to you by voice.
+            You can list services, give prices and slot rules, and help registered users book an appointment.
+
+            Booking flow (follow in order when the user wants to book):
+            1) Confirm which service (name). Use resolve_service_by_name to get service_id.
+            2) Ask which date and what time they want. Convert to a single local datetime string
+               in ISO format with no timezone: YYYY-MM-DDTHH:MM:00 (seconds :00 unless the slot duration requires otherwise).
+            3) Call check_voice_slot_available with service_id and that ISO string. If not available, say why and ask for another time.
+            4) Ask for the email they used when registering on the website. Call verify_registered_email. If no account exists, say they must register on the website first; do not book.
+            5) Call book_voice_appointment with the same email, service_id, and appointment time. Confirm success clearly.
+
+            Keep answers short, plain text, no markdown or bullet symbols. Never ask for passwords.
+            If voice booking tools say the agent key is not configured, tell the user booking is temporarily unavailable.""",
         )
 
     async def _fetch_services(self) -> list[dict]:
@@ -58,6 +91,22 @@ class Assistant(Agent):
         return "Available services are: " + " | ".join(lines)
 
     @function_tool
+    async def resolve_service_by_name(self, context: RunContext, service_name: str) -> str:
+        """Look up a service by name and return its id and slot rules. Use before booking."""
+        services = await self._fetch_services()
+        target = service_name.strip().lower()
+        matched = [item for item in services if target in item["name"].lower()]
+        if not matched:
+            return f"No service matching '{service_name}'. Ask the user to pick from the listed services."
+        s = matched[0]
+        return (
+            f"service_id={s['id']}, name={s['name']}, price Rs {s['price']}, "
+            f"slot every {s['slot_duration_minutes']} minutes, "
+            f"hours {s['slot_start_time']} to {s['slot_end_time']}. "
+            f"Choose a time on a valid slot boundary within those hours."
+        )
+
+    @function_tool
     async def get_service_details(self, context: RunContext, service_name: str) -> str:
         """Get detailed information about one hospital service by name."""
         services = await self._fetch_services()
@@ -74,12 +123,89 @@ class Assistant(Agent):
         )
 
     @function_tool
-    async def explain_voice_booking_status(self, context: RunContext) -> str:
-        """Explain whether appointment booking through voice is currently enabled."""
-        return (
-            "Voice booking is not enabled yet. "
-            "I can currently provide service information like prices, slot duration and timings."
-        )
+    async def verify_registered_email(self, context: RunContext, email: str) -> str:
+        """Check whether an email is registered before booking. Requires HOSPITAL_AGENT_API_KEY on the agent."""
+        headers = _voice_headers()
+        if not headers:
+            return (
+                "Voice booking is not configured: missing HOSPITAL_AGENT_API_KEY in the agent environment."
+            )
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                f"{HOSPITAL_API_BASE_URL}/agent/verify-email",
+                json={"email": email.strip()},
+                headers=headers,
+            )
+        if r.status_code == 200:
+            data = r.json()
+            exists = data.get("exists", False)
+            return (
+                "That email is registered. You can proceed to book."
+                if exists
+                else "No account exists with that email. The user must register on the website before booking."
+            )
+        if r.status_code in (401, 503):
+            return f"Could not verify email (server): {await _http_error_detail(r)}"
+        return f"Could not verify email: {await _http_error_detail(r)}"
+
+    @function_tool
+    async def check_voice_slot_available(
+        self, context: RunContext, service_id: int, appointment_time_iso: str
+    ) -> str:
+        """Check if a slot is valid and still free. appointment_time_iso like 2026-04-08T10:30:00 (local, no timezone)."""
+        headers = _voice_headers()
+        if not headers:
+            return (
+                "Voice booking is not configured: missing HOSPITAL_AGENT_API_KEY in the agent environment."
+            )
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(
+                f"{HOSPITAL_API_BASE_URL}/agent/slot-available",
+                params={"service_id": service_id, "appointment_time": appointment_time_iso},
+                headers=headers,
+            )
+        if r.status_code != 200:
+            return f"Could not check slot: {await _http_error_detail(r)}"
+        data = r.json()
+        if data.get("available"):
+            return "The slot is available. You can continue with email verification and booking."
+        reason = data.get("reason") or "unknown"
+        return f"The slot is not available: {reason}"
+
+    @function_tool
+    async def book_voice_appointment(
+        self,
+        context: RunContext,
+        email: str,
+        service_id: int,
+        appointment_time_iso: str,
+        note: str | None = None,
+    ) -> str:
+        """Book the appointment for a registered email. Only call after verify_registered_email and slot check."""
+        headers = _voice_headers()
+        if not headers:
+            return (
+                "Voice booking is not configured: missing HOSPITAL_AGENT_API_KEY in the agent environment."
+            )
+        payload = {
+            "email": email.strip(),
+            "service_id": service_id,
+            "appointment_time": appointment_time_iso,
+            "note": (note.strip() if note and note.strip() else None),
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                f"{HOSPITAL_API_BASE_URL}/agent/appointments",
+                json=payload,
+                headers=headers,
+            )
+        if r.status_code == 200:
+            data = r.json()
+            when = data.get("appointment_time", appointment_time_iso)
+            svc = data.get("service") or {}
+            svc_name = svc.get("name", "the service")
+            return f"Booked successfully for {svc_name} at {when}."
+        return f"Booking failed: {await _http_error_detail(r)}"
 
 
 server = AgentServer()

@@ -10,22 +10,9 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.service import Service
 from app.models.user import User
 from app.schemas.appointment import AppointmentCreate, AppointmentOut
+from app.services.slot_validation import validate_appointment_slot, validate_future_appointment
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
-
-
-def _validate_slot(service: Service, appointment_time: datetime) -> None:
-    minute = appointment_time.minute
-    if minute % service.slot_duration_minutes != 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Minute must align with slot duration {service.slot_duration_minutes}",
-        )
-    if appointment_time.time() < service.slot_start_time or appointment_time.time() >= service.slot_end_time:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Appointment time outside service slot range",
-        )
 
 
 @router.post("", response_model=AppointmentOut)
@@ -37,10 +24,8 @@ def create_appointment(
     service = db.get(Service, payload.service_id)
     if not service:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
-    if payload.appointment_time <= datetime.now():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Use a future date/time")
-
-    _validate_slot(service, payload.appointment_time)
+    validate_future_appointment(payload.appointment_time)
+    validate_appointment_slot(service, payload.appointment_time)
 
     already_booked = db.scalar(
         select(Appointment).where(
