@@ -1,6 +1,7 @@
+import asyncio
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, joinedload
 
@@ -19,6 +20,7 @@ from app.schemas.agent_voice import (
     VoiceMyAppointmentsResponse,
 )
 from app.schemas.appointment import AppointmentOut
+from app.services.mailer import send_booking_email, send_cancellation_email
 from app.services.slot_validation import (
     slot_validation_error_message,
     validate_future_appointment,
@@ -135,6 +137,7 @@ def agent_cancel_appointment(
     payload: VoiceAppointmentCancelRequest,
     db: Session = Depends(get_db),
     _: None = Depends(verify_agent_key),
+    background_tasks: BackgroundTasks = None,
 ):
     """Cancel a booking after verifying the email owns the appointment."""
     email_norm = payload.email.strip().lower()
@@ -159,6 +162,16 @@ def agent_cancel_appointment(
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
+    service = db.get(Service, appointment.service_id)
+    if background_tasks is not None:
+        background_tasks.add_task(
+            asyncio.run,
+            send_cancellation_email(
+                user_email=user.email,
+                service_name=service.name if service else "Hospital Service",
+                appointment_time=appointment.appointment_time,
+            ),
+        )
     appointment = db.scalar(
         select(Appointment)
         .options(joinedload(Appointment.service))
@@ -172,6 +185,7 @@ def agent_create_appointment(
     payload: VoiceAppointmentCreate,
     db: Session = Depends(get_db),
     _: None = Depends(verify_agent_key),
+    background_tasks: BackgroundTasks = None,
 ):
     email_norm = payload.email.strip().lower()
     user = db.scalar(select(User).where(func.lower(User.email) == email_norm))
@@ -210,6 +224,15 @@ def agent_create_appointment(
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
+    if background_tasks is not None:
+        background_tasks.add_task(
+            asyncio.run,
+            send_booking_email(
+                user_email=user.email,
+                service_name=service.name,
+                appointment_time=appointment.appointment_time,
+            ),
+        )
     appointment = db.scalar(
         select(Appointment)
         .options(joinedload(Appointment.service))

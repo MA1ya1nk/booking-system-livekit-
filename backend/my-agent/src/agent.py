@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import re
+from datetime import date, datetime, timedelta
 
 import httpx
 from dotenv import load_dotenv
@@ -17,6 +19,7 @@ from livekit.agents import (
     inference,
     room_io,
 )
+from livekit.agents.inference.tts import CartesiaOptions
 from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -57,8 +60,8 @@ class Assistant(Agent):
 
             Booking flow (when the user wants to book):
             1) Confirm which service (name). Use resolve_service_by_name to get service_id.
-            2) Ask which date and what time they want. Convert to a single local datetime string
-               in ISO format with no timezone: YYYY-MM-DDTHH:MM:00 (seconds :00 unless the slot duration requires otherwise).
+            2) Ask which date and what time they want. Use resolve_appointment_time to convert natural language
+               such as "tomorrow at 10 am" into a local ISO datetime string (YYYY-MM-DDTHH:MM:00).
             3) Call check_voice_slot_available with service_id and that ISO string. If not available, say why and ask for another time.
             4) Ask for the email they used when registering on the website. Call verify_registered_email. If no account exists, say they must register on the website first; do not book.
             5) Call book_voice_appointment with the same email, service_id, and appointment time. Confirm success clearly.
@@ -69,6 +72,7 @@ class Assistant(Agent):
             3) Ask which booking to cancel (match by what they say to an appointment_id from the list).
             4) Call cancel_voice_appointment with email and appointment_id. Confirm cancellation clearly.
 
+            If asked for "available services", provide only service names unless the user asks for more details.
             Keep answers short, plain text, no markdown or bullet symbols. Never ask for passwords.
             If voice booking tools say the agent key is not configured, tell the user booking is temporarily unavailable.""",
         )
@@ -82,19 +86,13 @@ class Assistant(Agent):
 
     @function_tool
     async def list_hospital_services(self, context: RunContext) -> str:
-        """List all available hospital services with basic details."""
+        """List all available hospital service names only."""
         services = await self._fetch_services()
         if not services:
             return "No services are available right now."
 
-        lines = []
-        for service in services:
-            lines.append(
-                f"{service['name']}: price Rs {service['price']}, "
-                f"duration {service['slot_duration_minutes']} minutes, "
-                f"time {service['slot_start_time']} to {service['slot_end_time']}"
-            )
-        return "Available services are: " + " | ".join(lines)
+        names = [service["name"] for service in services]
+        return "Available services are: " + ", ".join(names)
 
     @function_tool
     async def resolve_service_by_name(self, context: RunContext, service_name: str) -> str:
@@ -127,6 +125,70 @@ class Assistant(Agent):
             f"Slot duration is {service['slot_duration_minutes']} minutes. "
             f"Available timing is {service['slot_start_time']} to {service['slot_end_time']}."
         )
+
+    @function_tool
+    async def resolve_appointment_time(
+        self,
+        context: RunContext,
+        when_text: str,
+        time_text: str | None = None,
+    ) -> str:
+        """Convert natural phrases like 'tomorrow at 10 am' to local ISO datetime YYYY-MM-DDTHH:MM:00."""
+        text = " ".join(part.strip() for part in [when_text or "", time_text or ""] if part).lower()
+        if not text:
+            return "Could not resolve date/time: empty input"
+
+        base_day = date.today()
+        if "day after tomorrow" in text:
+            target_day = base_day + timedelta(days=2)
+        elif "tomorrow" in text:
+            target_day = base_day + timedelta(days=1)
+        elif "today" in text:
+            target_day = base_day
+        else:
+            # Absolute date forms expected from LLM/user
+            date_match = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", text)
+            if not date_match:
+                return (
+                    "Could not resolve date. Ask user for date like YYYY-MM-DD or say today/tomorrow."
+                )
+            try:
+                year, month, day = map(int, date_match.groups())
+                target_day = date(year, month, day)
+            except ValueError:
+                return "Could not resolve date: invalid calendar date."
+
+        # Time patterns: 10, 10:30, 10 am, 10:30 pm
+        time_match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", text)
+        if not time_match:
+            return "Could not resolve time. Ask user for time like 10:00 or 10 am."
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2) or 0)
+        meridiem = time_match.group(3)
+
+        if meridiem:
+            if hour < 1 or hour > 12:
+                return "Could not resolve time: hour must be 1-12 with am/pm."
+            if meridiem == "am":
+                hour = 0 if hour == 12 else hour
+            else:
+                hour = 12 if hour == 12 else hour + 12
+        else:
+            if hour > 23:
+                return "Could not resolve time: hour must be 0-23."
+
+        if minute > 59:
+            return "Could not resolve time: minute must be 0-59."
+
+        resolved = datetime(
+            target_day.year,
+            target_day.month,
+            target_day.day,
+            hour,
+            minute,
+            0,
+        )
+        return resolved.isoformat(timespec="seconds")
 
     @function_tool
     async def verify_registered_email(self, context: RunContext, email: str) -> str:
@@ -297,7 +359,9 @@ async def my_agent(ctx: JobContext):
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
         tts=inference.TTS(
-            model="cartesia/sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+            model="cartesia/sonic-3",
+            voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc",
+            extra_kwargs=CartesiaOptions(speed="normal"),
         ),
         # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
         # See more at https://docs.livekit.io/agents/build/turns

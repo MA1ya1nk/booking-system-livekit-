@@ -1,6 +1,7 @@
+import asyncio
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session, joinedload
 
@@ -10,6 +11,7 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.service import Service
 from app.models.user import User
 from app.schemas.appointment import AppointmentCreate, AppointmentOut
+from app.services.mailer import send_booking_email, send_cancellation_email
 from app.services.slot_validation import validate_appointment_slot, validate_future_appointment
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
@@ -20,6 +22,7 @@ def create_appointment(
     payload: AppointmentCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    background_tasks: BackgroundTasks = None,
 ):
     service = db.get(Service, payload.service_id)
     if not service:
@@ -49,6 +52,15 @@ def create_appointment(
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
+    if background_tasks is not None:
+        background_tasks.add_task(
+            asyncio.run,
+            send_booking_email(
+                user_email=current_user.email,
+                service_name=service.name,
+                appointment_time=appointment.appointment_time,
+            ),
+        )
     return appointment
 
 
@@ -92,6 +104,7 @@ def cancel_appointment(
     appointment_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    background_tasks: BackgroundTasks = None,
 ):
     appointment = db.get(Appointment, appointment_id)
     if not appointment or appointment.user_id != current_user.id:
@@ -100,4 +113,14 @@ def cancel_appointment(
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
+    service = db.get(Service, appointment.service_id)
+    if background_tasks is not None:
+        background_tasks.add_task(
+            asyncio.run,
+            send_cancellation_email(
+                user_email=current_user.email,
+                service_name=service.name if service else "Hospital Service",
+                appointment_time=appointment.appointment_time,
+            ),
+        )
     return appointment

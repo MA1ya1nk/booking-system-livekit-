@@ -19,5 +19,16 @@ class Settings(BaseSettings):
     # Must match agent worker @server.rtc_session(agent_name=...)
     livekit_agent_name: str = "my-agent"
 
+    # SendGrid email notifications (booking/cancellation). If not configured, email sending is skipped.
+    sendgrid_api_key: str | None = None
+    sendgrid_from_email: str | None = None
+    # SMTP notifications (recommended fallback if SendGrid key unavailable)
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str | None = None
+    smtp_use_tls: bool = True
+
 
 settings = Settings()
