@@ -23,16 +23,16 @@ a:hover { text-decoration: underline; }
   border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px;
 }
 .form { display: flex; flex-direction: column; gap: 10px; }
-.cancel-row {
+.appointments-toolbar {
   flex-direction: row;
   flex-wrap: wrap;
-  align-items: stretch;
+  align-items: center;
   gap: 10px;
   margin-bottom: 12px;
 }
-.cancel-row select {
-  flex: 1;
-  min-width: 200px;
+.appointments-toolbar select {
+  flex: 0 1 220px;
+  max-width: 100%;
 }
 .form input, .form select {
   border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; font-size: 0.95rem;
