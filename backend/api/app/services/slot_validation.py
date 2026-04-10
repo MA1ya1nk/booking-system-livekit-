@@ -4,6 +4,7 @@ from datetime import datetime
 
 from fastapi import HTTPException, status
 
+from app.core.appointment_timezone import now_naive_in_appointment_tz
 from app.models.service import Service
 
 
@@ -23,7 +24,7 @@ def validate_appointment_slot(service: Service, appointment_time: datetime) -> N
 
 
 def validate_future_appointment(appointment_time: datetime) -> None:
-    if appointment_time <= datetime.now():
+    if appointment_time <= now_naive_in_appointment_tz():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Use a future date and time",
@@ -32,7 +33,7 @@ def validate_future_appointment(appointment_time: datetime) -> None:
 
 def slot_validation_error_message(service: Service, appointment_time: datetime) -> str | None:
     """Returns a human-readable reason if the slot is invalid, or None if slot rules pass (ignores DB conflicts)."""
-    if appointment_time <= datetime.now():
+    if appointment_time <= now_naive_in_appointment_tz():
         return "Use a future date and time"
     try:
         validate_appointment_slot(service, appointment_time)

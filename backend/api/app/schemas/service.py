@@ -1,7 +1,7 @@
 from datetime import time
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ServiceCreate(BaseModel):
@@ -13,12 +13,11 @@ class ServiceCreate(BaseModel):
 
 
 class ServiceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     slot_duration_minutes: int
     slot_start_time: time
     slot_end_time: time
     price: Decimal
-
-    class Config:
-        from_attributes = True

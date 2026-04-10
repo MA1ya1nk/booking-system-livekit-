@@ -30,5 +30,8 @@ class Settings(BaseSettings):
     smtp_from_email: str | None = None
     smtp_use_tls: bool = True
 
+    # All appointment wall times are interpreted in this IANA zone (DB stores naive local times).
+    appointment_timezone: str = "Asia/Kolkata"
+
 
 settings = Settings()

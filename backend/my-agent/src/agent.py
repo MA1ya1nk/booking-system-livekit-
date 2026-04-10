@@ -61,7 +61,7 @@ class Assistant(Agent):
             Booking flow (when the user wants to book):
             1) Confirm which service (name). Use resolve_service_by_name to get service_id.
             2) Ask which date and what time they want. Use resolve_appointment_time to convert natural language
-               such as "tomorrow at 10 am" into a local ISO datetime string (YYYY-MM-DDTHH:MM:00).
+               such as "tomorrow at 10 am" into an ISO datetime string (YYYY-MM-DDTHH:MM:00) in India local time (Asia/Kolkata).
             3) Call check_voice_slot_available with service_id and that ISO string. If not available, say why and ask for another time.
             4) Ask for the email they used when registering on the website. Call verify_registered_email. If no account exists, say they must register on the website first; do not book.
             5) Call book_voice_appointment with the same email, service_id, and appointment time. Confirm success clearly.
@@ -133,7 +133,7 @@ class Assistant(Agent):
         when_text: str,
         time_text: str | None = None,
     ) -> str:
-        """Convert natural phrases like 'tomorrow at 10 am' to local ISO datetime YYYY-MM-DDTHH:MM:00."""
+        """Convert natural phrases like 'tomorrow at 10 am' to India-local ISO datetime YYYY-MM-DDTHH:MM:00 (Asia/Kolkata)."""
         text = " ".join(part.strip() for part in [when_text or "", time_text or ""] if part).lower()
         if not text:
             return "Could not resolve date/time: empty input"
@@ -220,7 +220,7 @@ class Assistant(Agent):
     async def check_voice_slot_available(
         self, context: RunContext, service_id: int, appointment_time_iso: str
     ) -> str:
-        """Check if a slot is valid and still free. appointment_time_iso like 2026-04-08T10:30:00 (local, no timezone)."""
+        """Check if a slot is valid and still free. appointment_time_iso is India local wall time, e.g. 2026-04-08T10:30:00 (Asia/Kolkata)."""
         headers = _voice_headers()
         if not headers:
             return (

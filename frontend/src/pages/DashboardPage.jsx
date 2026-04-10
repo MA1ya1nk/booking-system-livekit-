@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import AppShell from '../components/AppShell'
 import { useAuth } from '../context/AuthContext'
 import { apiRequest } from '../lib/api'
+import { bookableSlotOptions, cancellableAppointmentOptions } from '../lib/dashboardDropdowns'
 
 function toIsoLocal(date) {
   const pad = (num) => String(num).padStart(2, '0')
@@ -34,8 +35,10 @@ function DashboardPage() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10))
   const [error, setError] = useState('')
   const [form, setForm] = useState({ service_id: '', appointment_time: '', note: '' })
+  const [cancelAppointmentId, setCancelAppointmentId] = useState('')
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
+    if (!token) return
     try {
       const [servicesData, appointmentsData] = await Promise.all([
         apiRequest('/services'),
@@ -46,11 +49,19 @@ function DashboardPage() {
     } catch (err) {
       setError(err.message)
     }
-  }
+  }, [token])
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [loadData])
+
+  useEffect(() => {
+    if (!cancelAppointmentId) return
+    const stillExists = appointments.some(
+      (a) => a.status === 'booked' && String(a.id) === cancelAppointmentId,
+    )
+    if (!stillExists) setCancelAppointmentId('')
+  }, [appointments, cancelAppointmentId])
 
   useEffect(() => {
     const loadBookedSlots = async () => {
@@ -91,9 +102,13 @@ function DashboardPage() {
     }
   }
 
-  const handleCancel = async (id) => {
+  const handleCancel = async () => {
+    const id = Number(cancelAppointmentId)
+    if (!id) return
+    setError('')
     try {
       await apiRequest(`/appointments/${id}/cancel`, { method: 'PATCH', token })
+      setCancelAppointmentId('')
       await loadData()
     } catch (err) {
       setError(err.message)
@@ -108,6 +123,9 @@ function DashboardPage() {
     const value = toIsoLocal(slot)
     return slot > now && !bookedSet.has(value)
   })
+
+  const slotOptions = bookableSlotOptions(bookableSlots, toIsoLocal)
+  const cancelOptions = cancellableAppointmentOptions(appointments)
 
   return (
     <AppShell title="User Dashboard">
@@ -140,32 +158,24 @@ function DashboardPage() {
               required
             />
             {selectedService ? (
-              <div className="slot-grid">
-                {bookableSlots.map((slot) => {
-                  const value = toIsoLocal(slot)
-                  const selected = form.appointment_time === value
-                  return (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`btn slot-btn ${selected ? 'primary' : ''}`}
-                      onClick={() => setForm((prev) => ({ ...prev, appointment_time: value }))}
-                    >
-                      {slot.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </button>
-                  )
-                })}
-              </div>
+              <select
+                value={form.appointment_time}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, appointment_time: e.target.value }))
+                }
+                required
+                disabled={slotOptions.length === 0}
+              >
+                <option value="">
+                  {slotOptions.length === 0 ? 'No available slots for this date' : 'Select a time slot'}
+                </option>
+                {slotOptions.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
             ) : null}
-            {selectedService && bookableSlots.length === 0 ? (
-              <p className="small-text">No available slots for this date.</p>
-            ) : null}
-            <input
-              value={form.appointment_time ? new Date(form.appointment_time).toLocaleString() : ''}
-              readOnly
-              placeholder="Select a slot above"
-              required
-            />
             <input
               placeholder="Note (optional)"
               value={form.note}
@@ -180,6 +190,30 @@ function DashboardPage() {
 
         <div className="card">
           <h3>My Appointments</h3>
+          {cancelOptions.length > 0 ? (
+            <div className="form cancel-row">
+              <select
+                value={cancelAppointmentId}
+                onChange={(e) => setCancelAppointmentId(e.target.value)}
+                aria-label="Select appointment to cancel"
+              >
+                <option value="">Cancel: choose an appointment…</option>
+                {cancelOptions.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn"
+                disabled={!cancelAppointmentId}
+                onClick={handleCancel}
+              >
+                Cancel appointment
+              </button>
+            </div>
+          ) : null}
           <div className="list">
             {appointments.length === 0 ? <p className="small-text">No appointments yet.</p> : null}
             {appointments.map((item) => (
@@ -189,11 +223,6 @@ function DashboardPage() {
                   <p className="small-text">{new Date(item.appointment_time).toLocaleString()}</p>
                   <p className="small-text">Status: {item.status}</p>
                 </div>
-                {item.status === 'booked' ? (
-                  <button className="btn" onClick={() => handleCancel(item.id)}>
-                    Cancel
-                  </button>
-                ) : null}
               </div>
             ))}
           </div>

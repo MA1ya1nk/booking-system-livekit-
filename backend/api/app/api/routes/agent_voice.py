@@ -6,6 +6,11 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import verify_agent_key
+from app.core.appointment_timezone import (
+    isoformat_appointment_naive,
+    normalize_to_naive_appointment_time,
+    now_naive_in_appointment_tz,
+)
 from app.db.session import get_db
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.service import Service
@@ -20,6 +25,7 @@ from app.schemas.agent_voice import (
     VoiceMyAppointmentsResponse,
 )
 from app.schemas.appointment import AppointmentOut
+from app.services.appointment_commit import commit_or_slot_conflict
 from app.services.mailer import send_booking_email, send_cancellation_email
 from app.services.slot_validation import (
     slot_validation_error_message,
@@ -61,7 +67,7 @@ def agent_booked_slots(
         )
     ).all()
     return {
-        "slots": [item.appointment_time.isoformat(timespec="seconds") for item in rows],
+        "slots": [isoformat_appointment_naive(item.appointment_time) for item in rows],
     }
 
 
@@ -115,7 +121,7 @@ def agent_my_upcoming_appointments(
             and_(
                 Appointment.user_id == user.id,
                 Appointment.status == AppointmentStatus.BOOKED,
-                Appointment.appointment_time > datetime.now(),
+                Appointment.appointment_time > now_naive_in_appointment_tz(),
             )
         )
         .order_by(Appointment.appointment_time.asc())
@@ -222,7 +228,7 @@ def agent_create_appointment(
         status=AppointmentStatus.BOOKED,
     )
     db.add(appointment)
-    db.commit()
+    commit_or_slot_conflict(db)
     db.refresh(appointment)
     if background_tasks is not None:
         background_tasks.add_task(

@@ -6,11 +6,13 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user
+from app.core.appointment_timezone import isoformat_appointment_naive
 from app.db.session import get_db
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.service import Service
 from app.models.user import User
 from app.schemas.appointment import AppointmentCreate, AppointmentOut
+from app.services.appointment_commit import commit_or_slot_conflict
 from app.services.mailer import send_booking_email, send_cancellation_email
 from app.services.slot_validation import validate_appointment_slot, validate_future_appointment
 
@@ -50,7 +52,7 @@ def create_appointment(
         status=AppointmentStatus.BOOKED,
     )
     db.add(appointment)
-    db.commit()
+    commit_or_slot_conflict(db)
     db.refresh(appointment)
     if background_tasks is not None:
         background_tasks.add_task(
@@ -95,7 +97,7 @@ def booked_slots(
         )
     ).all()
     return {
-        "slots": [item.appointment_time.isoformat(timespec="seconds") for item in rows],
+        "slots": [isoformat_appointment_naive(item.appointment_time) for item in rows],
     }
 
 

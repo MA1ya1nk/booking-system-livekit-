@@ -6,6 +6,7 @@ from email.message import EmailMessage
 
 import httpx
 
+from app.core.appointment_timezone import aware_appointment_datetime_for_json
 from app.core.config import settings
 
 logger = logging.getLogger("mailer")
@@ -65,7 +66,8 @@ async def _send_via_sendgrid(to_email: str, subject: str, body: str) -> None:
 
 
 def _fmt_dt(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%d %H:%M")
+    adt = aware_appointment_datetime_for_json(dt)
+    return adt.strftime("%Y-%m-%d %H:%M %Z")
 
 
 async def send_booking_email(user_email: str, service_name: str, appointment_time: datetime) -> None:
