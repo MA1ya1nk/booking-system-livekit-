@@ -53,15 +53,21 @@ class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
             instructions="""You are a hospital voice assistant. Users speak to you by voice.
-            You can list services, give prices and slot rules, and help registered users book an appointment.
+            You can list services, give prices and slot rules, and help registered users book or cancel appointments.
 
-            Booking flow (follow in order when the user wants to book):
+            Booking flow (when the user wants to book):
             1) Confirm which service (name). Use resolve_service_by_name to get service_id.
             2) Ask which date and what time they want. Convert to a single local datetime string
                in ISO format with no timezone: YYYY-MM-DDTHH:MM:00 (seconds :00 unless the slot duration requires otherwise).
             3) Call check_voice_slot_available with service_id and that ISO string. If not available, say why and ask for another time.
             4) Ask for the email they used when registering on the website. Call verify_registered_email. If no account exists, say they must register on the website first; do not book.
             5) Call book_voice_appointment with the same email, service_id, and appointment time. Confirm success clearly.
+
+            Cancel flow (when the user wants to cancel):
+            1) Ask for their registered email. Call verify_registered_email if unsure the account exists.
+            2) Call list_voice_upcoming_appointments with that email. Read back each booking with its appointment id, service, and time.
+            3) Ask which booking to cancel (match by what they say to an appointment_id from the list).
+            4) Call cancel_voice_appointment with email and appointment_id. Confirm cancellation clearly.
 
             Keep answers short, plain text, no markdown or bullet symbols. Never ask for passwords.
             If voice booking tools say the agent key is not configured, tell the user booking is temporarily unavailable.""",
@@ -206,6 +212,60 @@ class Assistant(Agent):
             svc_name = svc.get("name", "the service")
             return f"Booked successfully for {svc_name} at {when}."
         return f"Booking failed: {await _http_error_detail(r)}"
+
+    @function_tool
+    async def list_voice_upcoming_appointments(self, context: RunContext, email: str) -> str:
+        """List this user's future booked appointments (appointment id, service, time). Use before cancel."""
+        headers = _voice_headers()
+        if not headers:
+            return (
+                "Voice booking is not configured: missing HOSPITAL_AGENT_API_KEY in the agent environment."
+            )
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(
+                f"{HOSPITAL_API_BASE_URL}/agent/my-appointments",
+                params={"email": email.strip()},
+                headers=headers,
+            )
+        if r.status_code == 200:
+            data = r.json()
+            items = data.get("appointments") or []
+            if not items:
+                return "No upcoming bookings found for that email."
+            lines = []
+            for a in items:
+                lines.append(
+                    f"id {a['appointment_id']}: {a['service_name']} at {a['appointment_time']}"
+                )
+            return "Upcoming bookings: " + " | ".join(lines)
+        if r.status_code == 404:
+            return "No registered account with that email."
+        return f"Could not list appointments: {await _http_error_detail(r)}"
+
+    @function_tool
+    async def cancel_voice_appointment(
+        self, context: RunContext, email: str, appointment_id: int
+    ) -> str:
+        """Cancel a booking. Use appointment_id from list_voice_upcoming_appointments."""
+        headers = _voice_headers()
+        if not headers:
+            return (
+                "Voice booking is not configured: missing HOSPITAL_AGENT_API_KEY in the agent environment."
+            )
+        payload = {"email": email.strip(), "appointment_id": appointment_id}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                f"{HOSPITAL_API_BASE_URL}/agent/appointments/cancel",
+                json=payload,
+                headers=headers,
+            )
+        if r.status_code == 200:
+            data = r.json()
+            when = data.get("appointment_time", "")
+            svc = data.get("service") or {}
+            svc_name = svc.get("name", "the service")
+            return f"Cancelled: {svc_name} at {when}."
+        return f"Cancellation failed: {await _http_error_detail(r)}"
 
 
 server = AgentServer()

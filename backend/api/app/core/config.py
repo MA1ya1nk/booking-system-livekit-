@@ -12,5 +12,12 @@ class Settings(BaseSettings):
     # Shared secret for voice agent → API (header X-Agent-Key). If unset, agent routes return 503.
     agent_api_key: str | None = None
 
+    # LiveKit (browser voice UI). If unset, POST /livekit/token returns 503.
+    livekit_url: str | None = None  # e.g. wss://your-project.livekit.cloud
+    livekit_api_key: str | None = None
+    livekit_api_secret: str | None = None
+    # Must match agent worker @server.rtc_session(agent_name=...)
+    livekit_agent_name: str = "my-agent"
+
 
 settings = Settings()

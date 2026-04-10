@@ -13,7 +13,10 @@ from app.schemas.agent_voice import (
     EmailVerifyRequest,
     EmailVerifyResponse,
     SlotAvailableResponse,
+    VoiceAppointmentCancelRequest,
     VoiceAppointmentCreate,
+    VoiceBookingListItem,
+    VoiceMyAppointmentsResponse,
 )
 from app.schemas.appointment import AppointmentOut
 from app.services.slot_validation import (
@@ -87,6 +90,81 @@ def agent_slot_available(
     if already_booked:
         return SlotAvailableResponse(available=False, reason="Slot already booked")
     return SlotAvailableResponse(available=True, reason=None)
+
+
+@router.get("/my-appointments", response_model=VoiceMyAppointmentsResponse)
+def agent_my_upcoming_appointments(
+    email: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_agent_key),
+):
+    """List upcoming booked appointments for a registered email (voice assistant)."""
+    normalized = email.strip().lower()
+    user = db.scalar(select(User).where(func.lower(User.email) == normalized))
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No registered account with this email",
+        )
+    rows = db.scalars(
+        select(Appointment)
+        .options(joinedload(Appointment.service))
+        .where(
+            and_(
+                Appointment.user_id == user.id,
+                Appointment.status == AppointmentStatus.BOOKED,
+                Appointment.appointment_time > datetime.now(),
+            )
+        )
+        .order_by(Appointment.appointment_time.asc())
+    ).all()
+    items = [
+        VoiceBookingListItem(
+            appointment_id=a.id,
+            service_id=a.service_id,
+            service_name=a.service.name,
+            appointment_time=a.appointment_time,
+        )
+        for a in rows
+    ]
+    return VoiceMyAppointmentsResponse(appointments=items)
+
+
+@router.post("/appointments/cancel", response_model=AppointmentOut)
+def agent_cancel_appointment(
+    payload: VoiceAppointmentCancelRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(verify_agent_key),
+):
+    """Cancel a booking after verifying the email owns the appointment."""
+    email_norm = payload.email.strip().lower()
+    user = db.scalar(select(User).where(func.lower(User.email) == email_norm))
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No registered account with this email",
+        )
+    appointment = db.get(Appointment, payload.appointment_id)
+    if not appointment or appointment.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Appointment not found",
+        )
+    if appointment.status != AppointmentStatus.BOOKED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Appointment is not active or already cancelled",
+        )
+    appointment.status = AppointmentStatus.CANCELLED
+    db.add(appointment)
+    db.commit()
+    db.refresh(appointment)
+    appointment = db.scalar(
+        select(Appointment)
+        .options(joinedload(Appointment.service))
+        .where(Appointment.id == appointment.id)
+    )
+    return appointment
 
 
 @router.post("/appointments", response_model=AppointmentOut)

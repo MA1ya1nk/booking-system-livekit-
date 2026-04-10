@@ -23,3 +23,19 @@ class VoiceAppointmentCreate(BaseModel):
 class SlotAvailableResponse(BaseModel):
     available: bool
     reason: str | None = None
+
+
+class VoiceBookingListItem(BaseModel):
+    appointment_id: int
+    service_id: int
+    service_name: str
+    appointment_time: datetime
+
+
+class VoiceMyAppointmentsResponse(BaseModel):
+    appointments: list[VoiceBookingListItem]
+
+
+class VoiceAppointmentCancelRequest(BaseModel):
+    email: EmailStr
+    appointment_id: int

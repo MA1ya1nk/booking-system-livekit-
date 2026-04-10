@@ -14,7 +14,12 @@ export async function apiRequest(path, { method = 'GET', token, body } = {}) {
   const data = isJson ? await response.json() : null
 
   if (!response.ok) {
-    throw new Error(data?.detail || 'Request failed')
+    const detail = data?.detail
+    let message = 'Request failed'
+    if (typeof detail === 'string') message = detail
+    else if (Array.isArray(detail))
+      message = detail.map((d) => (typeof d === 'object' ? d.msg || JSON.stringify(d) : String(d))).join('; ')
+    throw new Error(message)
   }
   return data
 }

@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
+import VoiceAssistantButton from './components/VoiceAssistantButton'
 import { useAuth } from './context/AuthContext'
 import AdminServicesPage from './pages/AdminServicesPage'
 import DashboardPage from './pages/DashboardPage'
@@ -16,6 +17,7 @@ function ProtectedRoute({ children, adminOnly = false }) {
 
 function App() {
   return (
+    <>
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/register" element={<RegisterPage />} />
@@ -38,6 +40,8 @@ function App() {
       />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    <VoiceAssistantButton />
+    </>
   )
 }
 
