@@ -11,59 +11,10 @@ from app.db.session import get_db
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.service import Service
 from app.models.user import User
-from app.schemas.appointment import AppointmentCreate, AppointmentOut
-from app.services.appointment_commit import commit_or_slot_conflict
-from app.services.mailer import send_booking_email, send_cancellation_email
-from app.services.slot_validation import validate_appointment_slot, validate_future_appointment
+from app.schemas.appointment import AppointmentOut
+from app.services.mailer import send_cancellation_email
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
-
-
-@router.post("", response_model=AppointmentOut)
-def create_appointment(
-    payload: AppointmentCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    background_tasks: BackgroundTasks = None,
-):
-    service = db.get(Service, payload.service_id)
-    if not service:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
-    validate_future_appointment(payload.appointment_time)
-    validate_appointment_slot(service, payload.appointment_time)
-
-    already_booked = db.scalar(
-        select(Appointment).where(
-            and_(
-                Appointment.service_id == payload.service_id,
-                Appointment.appointment_time == payload.appointment_time,
-                Appointment.status == AppointmentStatus.BOOKED,
-            )
-        )
-    )
-    if already_booked:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot already booked")
-
-    appointment = Appointment(
-        user_id=current_user.id,
-        service_id=payload.service_id,
-        appointment_time=payload.appointment_time,
-        note=payload.note,
-        status=AppointmentStatus.BOOKED,
-    )
-    db.add(appointment)
-    commit_or_slot_conflict(db)
-    db.refresh(appointment)
-    if background_tasks is not None:
-        background_tasks.add_task(
-            asyncio.run,
-            send_booking_email(
-                user_email=current_user.email,
-                service_name=service.name,
-                appointment_time=appointment.appointment_time,
-            ),
-        )
-    return appointment
 
 
 @router.get("/me", response_model=list[AppointmentOut])

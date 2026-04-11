@@ -27,6 +27,10 @@ def _sendgrid_configured() -> bool:
     )
 
 
+def is_mailer_configured() -> bool:
+    return _smtp_configured() or _sendgrid_configured()
+
+
 def _send_via_smtp(to_email: str, subject: str, body: str) -> None:
     msg = EmailMessage()
     msg["From"] = settings.smtp_from_email.strip()  # type: ignore[union-attr]
@@ -68,6 +72,36 @@ async def _send_via_sendgrid(to_email: str, subject: str, body: str) -> None:
 def _fmt_dt(dt: datetime) -> str:
     adt = aware_appointment_datetime_for_json(dt)
     return adt.strftime("%Y-%m-%d %H:%M %Z")
+
+
+async def send_payment_link_email(
+    user_email: str,
+    service_name: str,
+    amount_rupees: str,
+    appointment_summary: str,
+    pay_url: str,
+) -> None:
+    """Email a Razorpay payment link so the user can pay later (same booking as website after payment)."""
+    subject = "Complete payment for your appointment"
+    body = (
+        "Please pay using the secure link below to confirm your appointment.\n\n"
+        f"Service: {service_name}\n"
+        f"Amount: ₹{amount_rupees}\n"
+        f"When: {appointment_summary}\n\n"
+        f"Pay now: {pay_url}\n\n"
+        "After payment succeeds, you will receive a booking confirmation email.\n"
+        "If you did not request this, ignore this message."
+    )
+    try:
+        if _smtp_configured():
+            await asyncio.to_thread(_send_via_smtp, user_email, subject, body)
+            return
+        if _sendgrid_configured():
+            await _send_via_sendgrid(user_email, subject, body)
+            return
+        logger.info("Neither SMTP nor SendGrid configured; skipping payment link email")
+    except Exception:
+        logger.exception("Failed to send payment link email")
 
 
 async def send_booking_email(user_email: str, service_name: str, appointment_time: datetime) -> None:

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import AppShell from '../components/AppShell'
 import { useAuth } from '../context/AuthContext'
 import { apiRequest } from '../lib/api'
+import { loadRazorpayScript } from '../lib/razorpay'
 
 function toIsoLocal(date) {
   const pad = (num) => String(num).padStart(2, '0')
@@ -27,12 +28,14 @@ function generateSlots(service, selectedDate) {
 }
 
 function DashboardPage() {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const [services, setServices] = useState([])
   const [appointments, setAppointments] = useState([])
   const [bookedSlots, setBookedSlots] = useState([])
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10))
   const [error, setError] = useState('')
+  const [linkMessage, setLinkMessage] = useState('')
+  const [linkSending, setLinkSending] = useState(false)
   const [form, setForm] = useState({ service_id: '', appointment_time: '', note: '' })
   /** 'bookings' = active; 'cancelled' = history */
   const [appointmentsView, setAppointmentsView] = useState('bookings')
@@ -74,21 +77,97 @@ function DashboardPage() {
     loadBookedSlots()
   }, [form.service_id, selectedDate, token])
 
+  const handleSendPaymentLink = async () => {
+    setError('')
+    setLinkMessage('')
+    if (!form.service_id || !form.appointment_time) {
+      setError('Select service, date, and a time slot first.')
+      return
+    }
+    setLinkSending(true)
+    try {
+      const body = {
+        service_id: Number(form.service_id),
+        appointment_time: form.appointment_time,
+      }
+      if (form.note?.trim()) body.note = form.note.trim()
+      const res = await apiRequest('/payments/send-payment-link-email', {
+        method: 'POST',
+        token,
+        body,
+      })
+      if (res.email_sent) {
+        setLinkMessage(
+          'Payment link sent to your email. After payment, your booking is created when Razorpay calls the webhook (see server docs).',
+        )
+      } else {
+        setLinkMessage(
+          `Email not configured on the server — open this link to pay: ${res.short_url || '(no URL)'}`,
+        )
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLinkSending(false)
+    }
+  }
+
   const handleBook = async (e) => {
     e.preventDefault()
     setError('')
+    setLinkMessage('')
     try {
-      await apiRequest('/appointments', {
-        method: 'POST',
-        token,
-        body: {
-          service_id: Number(form.service_id),
-          appointment_time: form.appointment_time,
-          note: form.note,
+      await loadRazorpayScript()
+      const body = {
+        service_id: Number(form.service_id),
+        appointment_time: form.appointment_time,
+      }
+      if (form.note?.trim()) body.note = form.note.trim()
+
+      const { order_id: orderId, amount, currency, key_id: keyId } = await apiRequest(
+        '/payments/create-order',
+        { method: 'POST', token, body },
+      )
+
+      const svc = services.find((item) => item.id === Number(form.service_id))
+      const options = {
+        key: keyId,
+        amount,
+        currency,
+        order_id: orderId,
+        name: 'Hospital booking',
+        description: svc ? `Booking: ${svc.name}` : 'Appointment',
+        handler: async (response) => {
+          try {
+            await apiRequest('/payments/verify-and-book', {
+              method: 'POST',
+              token,
+              body: {
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              },
+            })
+            setForm({ service_id: '', appointment_time: '', note: '' })
+            await loadData()
+          } catch (err) {
+            setError(err.message || 'Payment verification failed')
+          }
         },
-      })
-      setForm({ service_id: '', appointment_time: '', note: '' })
-      await loadData()
+        prefill: user?.email ? { email: user.email } : {},
+        theme: { color: '#2563eb' },
+        modal: {
+          ondismiss: () => {},
+        },
+      }
+
+      const RazorpayCtor = window.Razorpay
+      if (!RazorpayCtor) {
+        setError('Razorpay failed to load')
+        return
+      }
+      const rzp = new RazorpayCtor(options)
+      rzp.open()
     } catch (err) {
       setError(err.message)
     }
@@ -125,6 +204,10 @@ function DashboardPage() {
       <div className="grid">
         <div className="card">
           <h3>Book Appointment</h3>
+          <p className="small-text">
+            Pay with Razorpay (test mode). Or email yourself a payment link and pay later — configure
+            webhooks on the API for the link flow.
+          </p>
           <form className="form" onSubmit={handleBook}>
             <select
               value={form.service_id}
@@ -182,10 +265,21 @@ function DashboardPage() {
               value={form.note}
               onChange={(e) => setForm((prev) => ({ ...prev, note: e.target.value }))}
             />
-            <button className="btn primary" type="submit">
-              Book
-            </button>
+            <div className="pay-actions">
+              <button className="btn primary" type="submit">
+                Pay &amp; book
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={linkSending}
+                onClick={handleSendPaymentLink}
+              >
+                {linkSending ? 'Sending…' : 'Email payment link'}
+              </button>
+            </div>
           </form>
+          {linkMessage ? <p className="footnote">{linkMessage}</p> : null}
           {error ? <p className="error">{error}</p> : null}
         </div>
 

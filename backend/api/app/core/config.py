@@ -33,5 +33,11 @@ class Settings(BaseSettings):
     # All appointment wall times are interpreted in this IANA zone (DB stores naive local times).
     appointment_timezone: str = "Asia/Kolkata"
 
+    # Razorpay (test keys from Dashboard → API Keys; Key Id = rzp_test_...)
+    razorpay_key_id: str | None = None
+    razorpay_key_secret: str | None = None
+    # Webhooks → https://your-api/api/v1/payments/webhook — events: payment_link.paid (and optionally payment.captured)
+    razorpay_webhook_secret: str | None = None
+
 
 settings = Settings()

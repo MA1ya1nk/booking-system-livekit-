@@ -26,6 +26,8 @@ Default admin credentials:
 - `GET /api/v1/auth/me`
 - `GET /api/v1/services`
 - `POST /api/v1/services` (admin only)
-- `POST /api/v1/appointments`
+- `POST /api/v1/payments/create-order` + `POST /api/v1/payments/verify-and-book` (Razorpay Checkout; dashboard)
+- `POST /api/v1/payments/send-payment-link-email` (Razorpay Payment Link + email; booking via webhook)
+- `POST /api/v1/payments/webhook` (Razorpay; `payment_link.paid` → create booking)
 - `GET /api/v1/appointments/me`
 - `PATCH /api/v1/appointments/{id}/cancel`

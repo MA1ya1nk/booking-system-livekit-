@@ -23,6 +23,12 @@ a:hover { text-decoration: underline; }
   border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px;
 }
 .form { display: flex; flex-direction: column; gap: 10px; }
+.pay-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
 .appointments-toolbar {
   flex-direction: row;
   flex-wrap: wrap;
