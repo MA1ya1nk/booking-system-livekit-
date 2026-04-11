@@ -1,0 +1,131 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #f4f6fb; color: #1f2937; }
+a { color: #2563eb; text-decoration: none; }
+a:hover { text-decoration: underline; }
+#root { min-height: 100vh; }
+
+.app-shell { min-height: 100vh; }
+.top-nav {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 24px; background: #fff; border-bottom: 1px solid #dbe2f0;
+}
+.top-nav-links { display: flex; align-items: center; gap: 12px; }
+.page-content { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.card { width: 100%; background: #fff; border: 1px solid #dbe2f0; border-radius: 12px; padding: 18px; }
+.actions { display: flex; gap: 12px; }
+.text { color: #334155; }
+.small-text { color: #4b5563; font-size: 0.9rem; }
+.center { text-align: center; margin-top: 60px; }
+.list { display: flex; flex-direction: column; gap: 10px; }
+.list-item {
+  display: flex; justify-content: space-between; align-items: center;
+  border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px;
+}
+.form { display: flex; flex-direction: column; gap: 10px; }
+.pay-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.appointments-toolbar {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.appointments-toolbar select {
+  flex: 0 1 220px;
+  max-width: 100%;
+}
+.form input, .form select {
+  border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; font-size: 0.95rem;
+}
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.slot-btn {
+  width: 100%;
+  font-size: 0.85rem;
+}
+.slot-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.btn {
+  display: inline-flex; justify-content: center; align-items: center;
+  border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 14px;
+  background: #fff; color: #1f2937; cursor: pointer; font-size: 0.95rem;
+}
+.btn.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+.error { color: #dc2626; margin: 0; }
+.footnote { margin-top: 10px; color: #4b5563; }
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+/* Floating voice assistant (LiveKit) */
+.voice-assistant-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: min(280px, calc(100vw - 32px));
+}
+.voice-assistant-audio {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+.voice-assistant-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid #2563eb;
+  background: #fff;
+  font-size: 1.35rem;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.voice-assistant-btn:hover:not(:disabled) {
+  background: #eff6ff;
+}
+.voice-assistant-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+.voice-assistant-btn.live {
+  background: #2563eb;
+  color: #fff;
+  border-color: #1d4ed8;
+}
+.voice-assistant-label {
+  font-size: 0.8rem;
+  color: #475569;
+  background: #fff;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+.voice-assistant-toast {
+  font-size: 0.8rem;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
