@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AppShell from '../components/AppShell'
 import { useAuth } from '../context/AuthContext'
 import { apiRequest } from '../lib/api'
@@ -36,6 +36,9 @@ function DashboardPage() {
   const [error, setError] = useState('')
   const [linkMessage, setLinkMessage] = useState('')
   const [linkSending, setLinkSending] = useState(false)
+  const [linkPolling, setLinkPolling] = useState(false)
+  const pollIntervalRef = useRef(null)
+  const pollingPendingRef = useRef(null)
   const [form, setForm] = useState({ service_id: '', appointment_time: '', note: '' })
   /** 'bookings' = active; 'cancelled' = history */
   const [appointmentsView, setAppointmentsView] = useState('bookings')
@@ -57,6 +60,27 @@ function DashboardPage() {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  const stopPaymentLinkPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current)
+      pollIntervalRef.current = null
+    }
+    pollingPendingRef.current = null
+    setLinkPolling(false)
+  }, [])
+
+  useEffect(() => () => stopPaymentLinkPolling(), [stopPaymentLinkPolling])
+
+  /** When user returns from paying in another tab, refresh if we are waiting for a payment-link booking. */
+  useEffect(() => {
+    if (!linkPolling) return
+    const onVis = () => {
+      if (document.visibilityState === 'visible') loadData()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [linkPolling, loadData])
 
   useEffect(() => {
     const loadBookedSlots = async () => {
@@ -84,6 +108,7 @@ function DashboardPage() {
       setError('Select service, date, and a time slot first.')
       return
     }
+    stopPaymentLinkPolling()
     setLinkSending(true)
     try {
       const body = {
@@ -96,17 +121,64 @@ function DashboardPage() {
         token,
         body,
       })
+      const pending = {
+        serviceId: Number(form.service_id),
+        appointmentTime: form.appointment_time,
+      }
+      pollingPendingRef.current = pending
+      setLinkPolling(true)
       if (res.email_sent) {
         setLinkMessage(
-          'Payment link sent to your email. After payment, your booking is created when Razorpay calls the webhook (see server docs).',
+          'Payment link sent to your email. This page will update automatically when your payment completes.',
         )
       } else {
         setLinkMessage(
-          `Email not configured on the server — open this link to pay: ${res.short_url || '(no URL)'}`,
+          `Email not configured on the server — open this link to pay: ${res.short_url || '(no URL)'}. This page will update when your booking is confirmed.`,
         )
       }
+
+      const matchesPending = (a) => {
+        if (a.status !== 'booked' || !a.service) return false
+        if (a.service.id !== pending.serviceId) return false
+        const t1 = new Date(a.appointment_time).getTime()
+        const t2 = new Date(pending.appointmentTime).getTime()
+        return Number.isFinite(t1) && Number.isFinite(t2) && Math.abs(t1 - t2) < 120000
+      }
+
+      let attempts = 0
+      const maxAttempts = 60
+      pollIntervalRef.current = setInterval(async () => {
+        attempts += 1
+        if (attempts > maxAttempts) {
+          stopPaymentLinkPolling()
+          setLinkMessage(
+            'Still waiting for payment. If you already paid, refresh this page or check back shortly.',
+          )
+          return
+        }
+        try {
+          const appointmentsData = await apiRequest('/appointments/me', { token })
+          const p = pollingPendingRef.current
+          if (!p) return
+          if (appointmentsData.some(matchesPending)) {
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current)
+              pollIntervalRef.current = null
+            }
+            pollingPendingRef.current = null
+            setLinkPolling(false)
+            setAppointments(appointmentsData)
+            const servicesData = await apiRequest('/services')
+            setServices(servicesData)
+            setLinkMessage('Booking confirmed. Your appointment is listed below.')
+          }
+        } catch {
+          /* ignore transient errors while polling */
+        }
+      }, 3000)
     } catch (err) {
       setError(err.message)
+      stopPaymentLinkPolling()
     } finally {
       setLinkSending(false)
     }
@@ -116,6 +188,7 @@ function DashboardPage() {
     e.preventDefault()
     setError('')
     setLinkMessage('')
+    stopPaymentLinkPolling()
     try {
       await loadRazorpayScript()
       const body = {
@@ -280,6 +353,9 @@ function DashboardPage() {
             </div>
           </form>
           {linkMessage ? <p className="footnote">{linkMessage}</p> : null}
+          {linkPolling ? (
+            <p className="footnote">Checking for your booking every few seconds…</p>
+          ) : null}
           {error ? <p className="error">{error}</p> : null}
         </div>
 

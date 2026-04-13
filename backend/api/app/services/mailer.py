@@ -80,11 +80,18 @@ async def send_payment_link_email(
     amount_rupees: str,
     appointment_summary: str,
     pay_url: str,
+    pay_within_minutes: int | None = None,
 ) -> None:
     """Email a Razorpay payment link so the user can pay later (same booking as website after payment)."""
     subject = "Complete payment for your appointment"
+    deadline = (
+        f"You must complete payment within {pay_within_minutes} minutes or this link will expire.\n\n"
+        if pay_within_minutes
+        else ""
+    )
     body = (
         "Please pay using the secure link below to confirm your appointment.\n\n"
+        f"{deadline}"
         f"Service: {service_name}\n"
         f"Amount: ₹{amount_rupees}\n"
         f"When: {appointment_summary}\n\n"

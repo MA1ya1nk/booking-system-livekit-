@@ -15,6 +15,7 @@ from app.db.session import get_db
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.service import Service
 from app.models.user import User
+from app.api.routes.payments import create_payment_link_for_user_email
 from app.schemas.agent_voice import (
     EmailVerifyRequest,
     EmailVerifyResponse,
@@ -23,10 +24,10 @@ from app.schemas.agent_voice import (
     VoiceAppointmentCreate,
     VoiceBookingListItem,
     VoiceMyAppointmentsResponse,
+    VoicePaymentLinkResponse,
 )
-from app.schemas.appointment import AppointmentOut
-from app.services.appointment_commit import commit_or_slot_conflict
-from app.services.mailer import send_booking_email, send_cancellation_email
+from app.schemas.appointment import AppointmentCreate, AppointmentOut
+from app.services.mailer import send_cancellation_email
 from app.services.slot_validation import (
     slot_validation_error_message,
     validate_future_appointment,
@@ -34,6 +35,9 @@ from app.services.slot_validation import (
 )
 
 router = APIRouter(prefix="/agent", tags=["agent-voice"])
+
+# Voice booking: payment link must be paid within this window (Razorpay expire_by).
+VOICE_PAYMENT_LINK_TTL_SEC = 300
 
 
 @router.post("/verify-email", response_model=EmailVerifyResponse)
@@ -186,13 +190,16 @@ def agent_cancel_appointment(
     return appointment
 
 
-@router.post("/appointments", response_model=AppointmentOut)
-def agent_create_appointment(
+@router.post("/appointments", response_model=VoicePaymentLinkResponse)
+async def agent_send_booking_payment_link(
     payload: VoiceAppointmentCreate,
     db: Session = Depends(get_db),
     _: None = Depends(verify_agent_key),
-    background_tasks: BackgroundTasks = None,
 ):
+    """
+    Send a Razorpay payment link to the user's email. Booking is created only after successful payment
+    (webhook). Link expires after VOICE_PAYMENT_LINK_TTL_SEC (5 minutes).
+    """
     email_norm = payload.email.strip().lower()
     user = db.scalar(select(User).where(func.lower(User.email) == email_norm))
     if not user:
@@ -201,47 +208,32 @@ def agent_create_appointment(
             detail="No registered account with this email",
         )
 
-    service = db.get(Service, payload.service_id)
-    if not service:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
-
-    validate_future_appointment(payload.appointment_time)
-    validate_appointment_slot(service, payload.appointment_time)
-
-    already_booked = db.scalar(
-        select(Appointment).where(
-            and_(
-                Appointment.service_id == payload.service_id,
-                Appointment.appointment_time == payload.appointment_time,
-                Appointment.status == AppointmentStatus.BOOKED,
-            )
-        )
-    )
-    if already_booked:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slot already booked")
-
-    appointment = Appointment(
-        user_id=user.id,
+    appt = AppointmentCreate(
         service_id=payload.service_id,
         appointment_time=payload.appointment_time,
         note=payload.note,
-        status=AppointmentStatus.BOOKED,
     )
-    db.add(appointment)
-    commit_or_slot_conflict(db)
-    db.refresh(appointment)
-    if background_tasks is not None:
-        background_tasks.add_task(
-            asyncio.run,
-            send_booking_email(
-                user_email=user.email,
-                service_name=service.name,
-                appointment_time=appointment.appointment_time,
-            ),
+    result = await create_payment_link_for_user_email(
+        db,
+        user,
+        appt,
+        expire_in_seconds=VOICE_PAYMENT_LINK_TTL_SEC,
+    )
+    mins = max(1, VOICE_PAYMENT_LINK_TTL_SEC // 60)
+    if result.get("email_sent"):
+        msg = (
+            f"A payment link was sent to your email. Pay within {mins} minutes to confirm your booking. "
+            "You will receive a confirmation email after payment succeeds."
         )
-    appointment = db.scalar(
-        select(Appointment)
-        .options(joinedload(Appointment.service))
-        .where(Appointment.id == appointment.id)
+    else:
+        msg = (
+            "Email is not configured on the server. Ask the user to pay using the link from the dashboard "
+            f"or website within {mins} minutes."
+        )
+    return VoicePaymentLinkResponse(
+        email_sent=bool(result.get("email_sent")),
+        expires_in_seconds=int(result.get("expires_in_seconds", VOICE_PAYMENT_LINK_TTL_SEC)),
+        payment_link_id=result.get("payment_link_id"),
+        short_url=result.get("short_url"),
+        message=msg,
     )
-    return appointment

@@ -47,6 +47,16 @@ class VoiceMyAppointmentsResponse(BaseModel):
     appointments: list[VoiceBookingListItem]
 
 
+class VoicePaymentLinkResponse(BaseModel):
+    """Voice flow: payment link emailed; booking is created only after Razorpay webhook confirms payment."""
+
+    email_sent: bool
+    expires_in_seconds: int
+    payment_link_id: str | None = None
+    short_url: str | None = None
+    message: str
+
+
 class VoiceAppointmentCancelRequest(BaseModel):
     email: EmailStr
     appointment_id: int

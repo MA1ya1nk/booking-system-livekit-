@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -153,7 +154,7 @@ def _enqueue_booking_confirmation_email(
 
 def _validate_booking_request(
     db: Session,
-    current_user: User,
+    user: User,
     payload: AppointmentCreate,
 ) -> tuple[Service, int, str, str]:
     """
@@ -189,6 +190,88 @@ def _validate_booking_request(
     time_str = payload.appointment_time.isoformat(timespec="seconds")
     note_str = (payload.note or "")[:500]
     return service, amount, time_str, note_str
+
+
+async def create_payment_link_for_user_email(
+    db: Session,
+    user: User,
+    payload: AppointmentCreate,
+    *,
+    expire_in_seconds: int | None = None,
+) -> dict:
+    """
+    Create a Razorpay Payment Link with booking notes; webhook creates the appointment after payment.
+    If expire_in_seconds is set, Razorpay expires the link after that window (e.g. 300 = 5 minutes).
+    """
+    _require_razorpay()
+    service, amount, time_str, note_str = _validate_booking_request(db, user, payload)
+
+    ref = f"ref_{uuid.uuid4().hex[:20]}"[:40]
+    client = _client()
+    pl_body: dict = {
+        "amount": amount,
+        "currency": "INR",
+        "accept_partial": False,
+        "description": f"Appointment: {service.name}",
+        "reference_id": ref,
+        "customer": {
+            "email": user.email,
+            "name": (user.name or user.email.split("@")[0])[:120],
+        },
+        "notify": {"sms": False, "email": False},
+        "reminder_enable": True,
+        "notes": {
+            "user_id": str(user.id),
+            "service_id": str(payload.service_id),
+            "appointment_time": time_str,
+            "note": note_str,
+        },
+    }
+    if expire_in_seconds is not None:
+        pl_body["expire_by"] = int(time.time()) + int(expire_in_seconds)
+
+    try:
+        pl = client.payment_link.create(pl_body)
+    except razorpay.errors.BadRequestError as e:
+        logger.exception("Razorpay payment link create failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(e) or "Razorpay payment link failed",
+        ) from e
+
+    short_url = pl.get("short_url")
+    if not short_url:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Razorpay returned no payment link URL")
+
+    adt = aware_appointment_datetime_for_json(payload.appointment_time)
+    summary = adt.strftime("%Y-%m-%d %H:%M %Z")
+    amount_rupees = str(service.price.quantize(Decimal("0.01")))
+
+    pay_within_minutes: int | None = None
+    if expire_in_seconds is not None:
+        pay_within_minutes = max(1, (int(expire_in_seconds) + 59) // 60)
+
+    email_sent = False
+    if is_mailer_configured():
+        await send_payment_link_email(
+            user_email=user.email,
+            service_name=service.name,
+            amount_rupees=amount_rupees,
+            appointment_summary=summary,
+            pay_url=short_url,
+            pay_within_minutes=pay_within_minutes,
+        )
+        email_sent = True
+
+    out: dict = {
+        "sent": True,
+        "email_sent": email_sent,
+        "payment_link_id": pl.get("id"),
+        "short_url": short_url,
+    }
+    if expire_in_seconds is not None:
+        out["expires_in_seconds"] = int(expire_in_seconds)
+    return out
 
 
 @router.post("/create-order")
@@ -242,65 +325,9 @@ async def send_booking_payment_link_email(
     Create a Razorpay Payment Link and email it to the logged-in user.
     After they pay, webhook payment_link.paid creates the booking and sends the usual confirmation email.
     """
-    _require_razorpay()
-    service, amount, time_str, note_str = _validate_booking_request(db, current_user, payload)
-
-    ref = f"ref_{uuid.uuid4().hex[:20]}"[:40]
-    client = _client()
-    try:
-        pl = client.payment_link.create(
-            {
-                "amount": amount,
-                "currency": "INR",
-                "accept_partial": False,
-                "description": f"Appointment: {service.name}",
-                "reference_id": ref,
-                "customer": {
-                    "email": current_user.email,
-                    "name": (current_user.name or current_user.email.split("@")[0])[:120],
-                },
-                "notify": {"sms": False, "email": False},
-                "reminder_enable": True,
-                "notes": {
-                    "user_id": str(current_user.id),
-                    "service_id": str(payload.service_id),
-                    "appointment_time": time_str,
-                    "note": note_str,
-                },
-            }
-        )
-    except razorpay.errors.BadRequestError as e:
-        logger.exception("Razorpay payment link create failed")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(e) or "Razorpay payment link failed",
-        ) from e
-
-    short_url = pl.get("short_url")
-    if not short_url:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Razorpay returned no payment link URL")
-
-    adt = aware_appointment_datetime_for_json(payload.appointment_time)
-    summary = adt.strftime("%Y-%m-%d %H:%M %Z")
-    amount_rupees = str(service.price.quantize(Decimal("0.01")))
-
-    email_sent = False
-    if is_mailer_configured():
-        await send_payment_link_email(
-            user_email=current_user.email,
-            service_name=service.name,
-            amount_rupees=amount_rupees,
-            appointment_summary=summary,
-            pay_url=short_url,
-        )
-        email_sent = True
-
-    return {
-        "sent": True,
-        "email_sent": email_sent,
-        "payment_link_id": pl.get("id"),
-        "short_url": short_url,
-    }
+    return await create_payment_link_for_user_email(
+        db, current_user, payload, expire_in_seconds=None
+    )
 
 
 @router.post("/verify-and-book", response_model=AppointmentOut)

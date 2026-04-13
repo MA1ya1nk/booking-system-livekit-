@@ -63,8 +63,8 @@ class Assistant(Agent):
             2) Ask which date and what time they want. Use resolve_appointment_time to convert natural language
                such as "tomorrow at 10 am" into an ISO datetime string (YYYY-MM-DDTHH:MM:00) in India local time (Asia/Kolkata).
             3) Call check_voice_slot_available with service_id and that ISO string. If not available, say why and ask for another time.
-            4) Ask for the email they used when registering on the website. Call verify_registered_email. If no account exists, say they must register on the website first; do not book.
-            5) Call book_voice_appointment with the same email, service_id, and appointment time. Confirm success clearly.
+            4) Ask for the email they used when registering on the website. Call verify_registered_email. If no account exists, say they must register on the website first; do not continue.
+            5) Call book_voice_appointment with the same email, service_id, and appointment time (optional note). This emails a secure Razorpay payment link. The booking is only confirmed after they pay within about five minutes. Tell them to check email and pay promptly; they will get a confirmation email after payment.
 
             Cancel flow (when the user wants to cancel):
             1) Ask for their registered email. Call verify_registered_email if unsure the account exists.
@@ -236,7 +236,7 @@ class Assistant(Agent):
             return f"Could not check slot: {await _http_error_detail(r)}"
         data = r.json()
         if data.get("available"):
-            return "The slot is available. You can continue with email verification and booking."
+            return "The slot is available. Continue with email verification, then send the payment link."
         reason = data.get("reason") or "unknown"
         return f"The slot is not available: {reason}"
 
@@ -249,7 +249,7 @@ class Assistant(Agent):
         appointment_time_iso: str,
         note: str | None = None,
     ) -> str:
-        """Book the appointment for a registered email. Only call after verify_registered_email and slot check."""
+        """Send a payment link email for this slot. Only call after verify_registered_email and slot check. Booking confirms after payment within ~5 minutes."""
         headers = _voice_headers()
         if not headers:
             return (
@@ -261,7 +261,7 @@ class Assistant(Agent):
             "appointment_time": appointment_time_iso,
             "note": (note.strip() if note and note.strip() else None),
         }
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.post(
                 f"{HOSPITAL_API_BASE_URL}/agent/appointments",
                 json=payload,
@@ -269,11 +269,20 @@ class Assistant(Agent):
             )
         if r.status_code == 200:
             data = r.json()
-            when = data.get("appointment_time", appointment_time_iso)
-            svc = data.get("service") or {}
-            svc_name = svc.get("name", "the service")
-            return f"Booked successfully for {svc_name} at {when}."
-        return f"Booking failed: {await _http_error_detail(r)}"
+            msg = data.get("message")
+            if msg:
+                return msg
+            exp = int(data.get("expires_in_seconds") or 300)
+            if data.get("email_sent"):
+                return (
+                    f"A payment link was sent to the user's email. They must pay within {exp // 60} minutes "
+                    "to confirm the booking. They will receive a confirmation email after payment."
+                )
+            url = data.get("short_url") or ""
+            return (
+                f"Email is not configured on the server. Share this payment link with the user; they must pay within {exp // 60} minutes: {url}"
+            )
+        return f"Could not send payment link: {await _http_error_detail(r)}"
 
     @function_tool
     async def list_voice_upcoming_appointments(self, context: RunContext, email: str) -> str:
