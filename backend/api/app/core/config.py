@@ -19,10 +19,14 @@ class Settings(BaseSettings):
     # Must match agent worker @server.rtc_session(agent_name=...)
     livekit_agent_name: str = "my-agent"
 
-    # SendGrid email notifications (booking/cancellation). If not configured, email sending is skipped.
+    # Resend (https://resend.com) — preferred for production (HTTPS API, works on Render).
+    resend_api_key: str | None = None
+    resend_from_email: str | None = None  # e.g. "Booking <onboarding@resend.dev>" or verified domain sender
+
+    # SendGrid email notifications (optional fallback).
     sendgrid_api_key: str | None = None
     sendgrid_from_email: str | None = None
-    # SMTP notifications (recommended fallback if SendGrid key unavailable)
+    # SMTP (optional local/dev fallback; avoid on Render — often blocked)
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None

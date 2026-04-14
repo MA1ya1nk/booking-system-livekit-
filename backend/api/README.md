@@ -9,6 +9,10 @@
 3. Run server:
    - `uvicorn app.main:app --reload`
 
+## Email (payment link, booking, cancellation)
+
+Configure **Resend** for production (e.g. on Render): set `RESEND_API_KEY` and `RESEND_FROM_EMAIL`, and **do not** set SMTP variables on the server. Optional fallbacks: SendGrid, then SMTP (see `.env.example`).
+
 ## Create admin user
 
 Run:

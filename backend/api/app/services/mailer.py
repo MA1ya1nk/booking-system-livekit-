@@ -21,6 +21,12 @@ def _smtp_configured() -> bool:
     )
 
 
+def _resend_configured() -> bool:
+    return bool(
+        (settings.resend_api_key or "").strip() and (settings.resend_from_email or "").strip()
+    )
+
+
 def _sendgrid_configured() -> bool:
     return bool(
         (settings.sendgrid_api_key or "").strip() and (settings.sendgrid_from_email or "").strip()
@@ -28,7 +34,7 @@ def _sendgrid_configured() -> bool:
 
 
 def is_mailer_configured() -> bool:
-    return _smtp_configured() or _sendgrid_configured()
+    return _resend_configured() or _sendgrid_configured() or _smtp_configured()
 
 
 def _send_via_smtp(to_email: str, subject: str, body: str) -> None:
@@ -49,6 +55,26 @@ def _send_via_smtp(to_email: str, subject: str, body: str) -> None:
             server.send_message(msg)
 
 
+async def _send_via_resend(to_email: str, subject: str, body: str) -> None:
+    payload = {
+        "from": settings.resend_from_email.strip(),  # type: ignore[union-attr]
+        "to": [to_email],
+        "subject": subject,
+        "text": body,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.resend_api_key.strip()}",  # type: ignore[union-attr]
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            "https://api.resend.com/emails",
+            headers=headers,
+            json=payload,
+        )
+        response.raise_for_status()
+
+
 async def _send_via_sendgrid(to_email: str, subject: str, body: str) -> None:
     payload = {
         "personalizations": [{"to": [{"email": to_email}]}],
@@ -67,6 +93,20 @@ async def _send_via_sendgrid(to_email: str, subject: str, body: str) -> None:
             json=payload,
         )
         response.raise_for_status()
+
+
+async def _dispatch_email(to_email: str, subject: str, body: str) -> bool:
+    """Send via Resend (preferred), then SendGrid, then SMTP. Returns True if a provider sent."""
+    if _resend_configured():
+        await _send_via_resend(to_email, subject, body)
+        return True
+    if _sendgrid_configured():
+        await _send_via_sendgrid(to_email, subject, body)
+        return True
+    if _smtp_configured():
+        await asyncio.to_thread(_send_via_smtp, to_email, subject, body)
+        return True
+    return False
 
 
 def _fmt_dt(dt: datetime) -> str:
@@ -100,19 +140,15 @@ async def send_payment_link_email(
         "If you did not request this, ignore this message."
     )
     try:
-        if _smtp_configured():
-            await asyncio.to_thread(_send_via_smtp, user_email, subject, body)
+        if await _dispatch_email(user_email, subject, body):
             return
-        if _sendgrid_configured():
-            await _send_via_sendgrid(user_email, subject, body)
-            return
-        logger.info("Neither SMTP nor SendGrid configured; skipping payment link email")
+        logger.info("No email provider configured; skipping payment link email")
     except Exception:
         logger.exception("Failed to send payment link email")
 
 
 async def send_booking_email(user_email: str, service_name: str, appointment_time: datetime) -> None:
-    """Send booking confirmation. Tries SMTP via asyncio.to_thread, then SendGrid fallback."""
+    """Send booking confirmation via Resend, SendGrid, or SMTP."""
     subject = "Appointment booked successfully"
     body = (
         "Your appointment has been booked.\n\n"
@@ -121,13 +157,9 @@ async def send_booking_email(user_email: str, service_name: str, appointment_tim
         "If this was not you, please contact support."
     )
     try:
-        if _smtp_configured():
-            await asyncio.to_thread(_send_via_smtp, user_email, subject, body)
+        if await _dispatch_email(user_email, subject, body):
             return
-        if _sendgrid_configured():
-            await _send_via_sendgrid(user_email, subject, body)
-            return
-        logger.info("Neither SMTP nor SendGrid configured; skipping booking email")
+        logger.info("No email provider configured; skipping booking email")
     except Exception:
         logger.exception("Failed to send booking email")
 
@@ -135,7 +167,7 @@ async def send_booking_email(user_email: str, service_name: str, appointment_tim
 async def send_cancellation_email(
     user_email: str, service_name: str, appointment_time: datetime
 ) -> None:
-    """Send cancellation confirmation. Tries SMTP via asyncio.to_thread, then SendGrid fallback."""
+    """Send cancellation confirmation via Resend, SendGrid, or SMTP."""
     subject = "Appointment cancelled"
     body = (
         "Your appointment has been cancelled.\n\n"
@@ -144,13 +176,8 @@ async def send_cancellation_email(
         "If this was not you, please contact support."
     )
     try:
-        if _smtp_configured():
-            await asyncio.to_thread(_send_via_smtp, user_email, subject, body)
+        if await _dispatch_email(user_email, subject, body):
             return
-        if _sendgrid_configured():
-            await _send_via_sendgrid(user_email, subject, body)
-            return
-        logger.info("Neither SMTP nor SendGrid configured; skipping cancellation email")
+        logger.info("No email provider configured; skipping cancellation email")
     except Exception:
         logger.exception("Failed to send cancellation email")
-
