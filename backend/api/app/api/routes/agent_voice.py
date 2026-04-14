@@ -37,7 +37,7 @@ from app.services.slot_validation import (
 router = APIRouter(prefix="/agent", tags=["agent-voice"])
 
 # Voice booking: payment link must be paid within this window (Razorpay expire_by).
-VOICE_PAYMENT_LINK_TTL_SEC = 300
+VOICE_PAYMENT_LINK_TTL_SEC = 1200
 
 
 @router.post("/verify-email", response_model=EmailVerifyResponse)
