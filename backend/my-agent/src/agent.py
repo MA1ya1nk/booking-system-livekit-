@@ -146,17 +146,72 @@ class Assistant(Agent):
         elif "today" in text:
             target_day = base_day
         else:
-            # Absolute date forms expected from LLM/user
+            # Absolute date forms expected from LLM/user.
+            # Supports:
+            # - 2026-04-28
+            # - 28/04/2026 or 28-04-2026
+            # - 28 april 2026 / 28 apr 2026
             date_match = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", text)
-            if not date_match:
+            slash_or_dash_match = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b", text)
+            month_name_match = re.search(
+                r"\b(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})\b",
+                text,
+            )
+            month_lookup = {
+                "jan": 1,
+                "january": 1,
+                "feb": 2,
+                "february": 2,
+                "mar": 3,
+                "march": 3,
+                "apr": 4,
+                "april": 4,
+                "may": 5,
+                "jun": 6,
+                "june": 6,
+                "jul": 7,
+                "july": 7,
+                "aug": 8,
+                "august": 8,
+                "sep": 9,
+                "sept": 9,
+                "september": 9,
+                "oct": 10,
+                "october": 10,
+                "nov": 11,
+                "november": 11,
+                "dec": 12,
+                "december": 12,
+            }
+
+            if date_match:
+                try:
+                    year, month, day = map(int, date_match.groups())
+                    target_day = date(year, month, day)
+                except ValueError:
+                    return "Could not resolve date: invalid calendar date."
+            elif slash_or_dash_match:
+                try:
+                    day, month, year = map(int, slash_or_dash_match.groups())
+                    target_day = date(year, month, day)
+                except ValueError:
+                    return "Could not resolve date: invalid calendar date."
+            elif month_name_match:
+                try:
+                    day = int(month_name_match.group(1))
+                    month_text = month_name_match.group(2).strip().lower()
+                    year = int(month_name_match.group(3))
+                    month = month_lookup.get(month_text)
+                    if month is None:
+                        return "Could not resolve date. Please say date like 28 April 2026."
+                    target_day = date(year, month, day)
+                except ValueError:
+                    return "Could not resolve date: invalid calendar date."
+            else:
                 return (
-                    "Could not resolve date. Ask user for date like YYYY-MM-DD or say today/tomorrow."
+                    "Could not resolve date. Please say a full date like 28 April 2026, "
+                    "or say today/tomorrow."
                 )
-            try:
-                year, month, day = map(int, date_match.groups())
-                target_day = date(year, month, day)
-            except ValueError:
-                return "Could not resolve date: invalid calendar date."
 
         # Time patterns: 10, 10:30, 10 am, 10:30 pm
         time_match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", text)

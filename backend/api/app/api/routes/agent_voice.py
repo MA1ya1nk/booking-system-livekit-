@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import verify_agent_key
 from app.core.appointment_timezone import (
-    isoformat_appointment_naive,
     normalize_to_naive_appointment_time,
     now_naive_in_appointment_tz,
 )
@@ -71,7 +70,7 @@ def agent_booked_slots(
         )
     ).all()
     return {
-        "slots": [isoformat_appointment_naive(item.appointment_time) for item in rows],
+        "slots": [item.appointment_time.strftime("%Y-%m-%dT%H:%M:%S") for item in rows],
     }
 
 

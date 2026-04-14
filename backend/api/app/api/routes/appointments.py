@@ -6,7 +6,6 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user
-from app.core.appointment_timezone import isoformat_appointment_naive
 from app.db.session import get_db
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.service import Service
@@ -48,7 +47,8 @@ def booked_slots(
         )
     ).all()
     return {
-        "slots": [isoformat_appointment_naive(item.appointment_time) for item in rows],
+        # Return local wall-time format without timezone suffix so frontend slot keys match exactly.
+        "slots": [item.appointment_time.strftime("%Y-%m-%dT%H:%M:%S") for item in rows],
     }
 
 

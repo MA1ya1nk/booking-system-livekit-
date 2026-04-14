@@ -34,9 +34,11 @@ export function AuthProvider({ children }) {
       token,
       user,
       loadingUser,
-      isAuthenticated: Boolean(token && user),
+      // Token presence gates access; user is fetched asynchronously after login/refresh.
+      isAuthenticated: Boolean(token),
       isAdmin: user?.role === 'admin',
       setAuthToken: (value) => {
+        setLoadingUser(Boolean(value))
         setToken(value)
         if (value) {
           localStorage.setItem('token', value)
