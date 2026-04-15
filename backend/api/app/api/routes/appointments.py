@@ -55,9 +55,9 @@ def booked_slots(
 @router.patch("/{appointment_id}/cancel", response_model=AppointmentOut)
 def cancel_appointment(
     appointment_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    background_tasks: BackgroundTasks = None,
 ):
     appointment = db.get(Appointment, appointment_id)
     if not appointment or appointment.user_id != current_user.id:
@@ -67,13 +67,16 @@ def cancel_appointment(
     db.commit()
     db.refresh(appointment)
     service = db.get(Service, appointment.service_id)
-    if background_tasks is not None:
-        background_tasks.add_task(
-            asyncio.run,
+    email = current_user.email
+    svc_name = service.name if service else "Hospital Service"
+    appt_time = appointment.appointment_time
+    background_tasks.add_task(
+        lambda: asyncio.run(
             send_cancellation_email(
-                user_email=current_user.email,
-                service_name=service.name if service else "Hospital Service",
-                appointment_time=appointment.appointment_time,
-            ),
+                user_email=email,
+                service_name=svc_name,
+                appointment_time=appt_time,
+            )
         )
+    )
     return appointment

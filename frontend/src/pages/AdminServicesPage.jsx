@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import AppShell from '../components/AppShell'
 import { useAuth } from '../context/AuthContext'
 import { apiRequest } from '../lib/api'
@@ -15,18 +15,19 @@ function AdminServicesPage() {
     price: '',
   })
 
-  const loadServices = async () => {
+  const loadServices = useCallback(async () => {
+    if (!token) return
     try {
-      const data = await apiRequest('/services')
+      const data = await apiRequest('/services', { token })
       setServices(data)
     } catch (err) {
       setError(err.message)
     }
-  }
+  }, [token])
 
   useEffect(() => {
     loadServices()
-  }, [])
+  }, [loadServices])
 
   const createService = async (e) => {
     e.preventDefault()

@@ -17,11 +17,6 @@ Configure **Resend** for production (e.g. on Render): set `RESEND_API_KEY` and `
 
 Run:
 
-`python -m app.scripts.create_admin`
-
-Default admin credentials:
-- email: `admin@example.com`
-- password: `admin123`
 
 ## Key endpoints
 

@@ -144,9 +144,9 @@ def agent_my_upcoming_appointments(
 @router.post("/appointments/cancel", response_model=AppointmentOut)
 def agent_cancel_appointment(
     payload: VoiceAppointmentCancelRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _: None = Depends(verify_agent_key),
-    background_tasks: BackgroundTasks = None,
 ):
     """Cancel a booking after verifying the email owns the appointment."""
     email_norm = payload.email.strip().lower()
@@ -172,15 +172,18 @@ def agent_cancel_appointment(
     db.commit()
     db.refresh(appointment)
     service = db.get(Service, appointment.service_id)
-    if background_tasks is not None:
-        background_tasks.add_task(
-            asyncio.run,
+    email = user.email
+    svc_name = service.name if service else "Hospital Service"
+    appt_time = appointment.appointment_time
+    background_tasks.add_task(
+        lambda: asyncio.run(
             send_cancellation_email(
-                user_email=user.email,
-                service_name=service.name if service else "Hospital Service",
-                appointment_time=appointment.appointment_time,
-            ),
+                user_email=email,
+                service_name=svc_name,
+                appointment_time=appt_time,
+            )
         )
+    )
     appointment = db.scalar(
         select(Appointment)
         .options(joinedload(Appointment.service))

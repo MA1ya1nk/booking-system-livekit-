@@ -3,36 +3,20 @@ import AppShell from '../components/AppShell'
 import { useAuth } from '../context/AuthContext'
 import { apiRequest } from '../lib/api'
 import { loadRazorpayScript } from '../lib/razorpay'
-
-function toIsoLocal(date) {
-  const pad = (num) => String(num).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours(),
-  )}:${pad(date.getMinutes())}:00`
-}
-
-function generateSlots(service, selectedDate) {
-  if (!service || !selectedDate) return []
-  const [year, month, day] = selectedDate.split('-').map(Number)
-  const [sh, sm] = service.slot_start_time.split(':').map(Number)
-  const [eh, em] = service.slot_end_time.split(':').map(Number)
-  const start = new Date(year, month - 1, day, sh, sm, 0)
-  const end = new Date(year, month - 1, day, eh, em, 0)
-  const slots = []
-  let cursor = new Date(start)
-  while (cursor < end) {
-    slots.push(new Date(cursor))
-    cursor = new Date(cursor.getTime() + service.slot_duration_minutes * 60000)
-  }
-  return slots
-}
+import {
+  formatAppointmentWallDisplay,
+  formatSlotTimeLabel,
+  generateAppointmentSlots,
+  nowIsoWallInAppointmentTz,
+  todayDateStringInAppointmentTz,
+} from '../lib/appointmentTimezone'
 
 function DashboardPage() {
   const { token, user } = useAuth()
   const [services, setServices] = useState([])
   const [appointments, setAppointments] = useState([])
   const [bookedSlots, setBookedSlots] = useState([])
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10))
+  const [selectedDate, setSelectedDate] = useState(() => todayDateStringInAppointmentTz())
   const [error, setError] = useState('')
   const [linkMessage, setLinkMessage] = useState('')
   const [linkSending, setLinkSending] = useState(false)
@@ -257,13 +241,10 @@ function DashboardPage() {
   }
 
   const selectedService = services.find((item) => item.id === Number(form.service_id))
-  const generatedSlots = generateSlots(selectedService, selectedDate)
+  const generatedSlots = generateAppointmentSlots(selectedService, selectedDate)
   const bookedSet = new Set(bookedSlots)
-  const now = new Date()
-  const bookableSlots = generatedSlots.filter((slot) => {
-    const value = toIsoLocal(slot)
-    return slot > now && !bookedSet.has(value)
-  })
+  const nowWall = nowIsoWallInAppointmentTz()
+  const bookableSlots = generatedSlots.filter((value) => value > nowWall && !bookedSet.has(value))
 
   const filteredAppointments = useMemo(() => {
     if (appointmentsView === 'bookings') {
@@ -299,7 +280,7 @@ function DashboardPage() {
             <input
               type="date"
               value={selectedDate}
-              min={new Date().toISOString().slice(0, 10)}
+              min={todayDateStringInAppointmentTz()}
               onChange={(e) => {
                 setSelectedDate(e.target.value)
                 setForm((prev) => ({ ...prev, appointment_time: '' }))
@@ -308,8 +289,7 @@ function DashboardPage() {
             />
             {selectedService ? (
               <div className="slot-grid">
-                {bookableSlots.map((slot) => {
-                  const value = toIsoLocal(slot)
+                {bookableSlots.map((value) => {
                   const selected = form.appointment_time === value
                   return (
                     <button
@@ -318,7 +298,7 @@ function DashboardPage() {
                       className={`btn slot-btn ${selected ? 'primary' : ''}`}
                       onClick={() => setForm((prev) => ({ ...prev, appointment_time: value }))}
                     >
-                      {slot.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {formatSlotTimeLabel(value)}
                     </button>
                   )
                 })}
@@ -328,7 +308,7 @@ function DashboardPage() {
               <p className="small-text">No available slots for this date.</p>
             ) : null}
             <input
-              value={form.appointment_time ? new Date(form.appointment_time).toLocaleString() : ''}
+              value={form.appointment_time ? formatAppointmentWallDisplay(form.appointment_time) : ''}
               readOnly
               placeholder="Select a slot above"
               required
@@ -388,7 +368,7 @@ function DashboardPage() {
               <div className="list-item" key={item.id}>
                 <div>
                   <strong>{item.service.name}</strong>
-                  <p className="small-text">{new Date(item.appointment_time).toLocaleString()}</p>
+                  <p className="small-text">{formatAppointmentWallDisplay(item.appointment_time)}</p>
                   <p className="small-text">Status: {item.status}</p>
                 </div>
                 {appointmentsView === 'bookings' && item.status === 'booked' ? (

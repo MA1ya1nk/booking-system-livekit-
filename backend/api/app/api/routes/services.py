@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
@@ -7,6 +8,7 @@ from app.db.session import get_db
 from app.models.service import Service
 from app.models.user import User
 from app.schemas.service import ServiceCreate, ServiceOut
+from app.services.appointment_commit import _is_unique_violation
 
 router = APIRouter(prefix="/services", tags=["services"])
 
@@ -43,6 +45,15 @@ def create_service(
         created_by_user_id=admin.id,
     )
     db.add(service)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if _is_unique_violation(exc):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A service with this name already exists",
+            ) from None
+        raise
     db.refresh(service)
     return service

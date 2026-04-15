@@ -1,4 +1,13 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
+const configuredBase = import.meta.env.VITE_API_BASE_URL
+const trimmed = typeof configuredBase === 'string' ? configuredBase.trim() : ''
+
+if (import.meta.env.PROD && !trimmed) {
+  throw new Error(
+    'VITE_API_BASE_URL is not set. Set it to your API base (e.g. https://api.example.com/api/v1) before building for production.',
+  )
+}
+
+const API_BASE_URL = trimmed || 'http://localhost:8000/api/v1'
 
 export async function apiRequest(path, { method = 'GET', token, body } = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
